@@ -1,0 +1,134 @@
+vim.opt.rtp:prepend(vim.fn.getcwd())
+
+local actions = require("quickfix_actions")
+
+local function check(value, message)
+	assert(value, message)
+	return value
+end
+
+actions.setup()
+check(vim.fn.exists(":QuickfixActionsOpen") == 2)
+check(vim.fn.exists(":QuickfixActionsDelete") == 2)
+check(vim.fn.exists(":QuickfixActionsSearch") == 2)
+
+local file = vim.fs.joinpath(vim.fn.getcwd(), "README.md")
+vim.fn.setqflist({}, "r", {
+	title = "diagnostics",
+	context = { source = "test", keep = true },
+	items = {
+		{
+			filename = file,
+			lnum = 3,
+			end_lnum = 4,
+			col = 2,
+			text = "problem",
+			user_data = { producer = "test", nested = { keep = true } },
+		},
+		{ filename = file, lnum = 8, text = "second", user_data = { id = 2 } },
+	},
+})
+check(actions.open())
+local current = check(actions.current())
+local target = { kind = "quickfix", id = current.id }
+check(current.item and current.item.user_data.producer == "test")
+check(actions.item(target, 1).user_data.nested.keep)
+
+local original_tick = current.changedtick
+vim.fn.setqflist({}, "r", {
+	items = current.items,
+	title = current.title,
+	context = current.context,
+	idx = current.index,
+})
+local stale_ok, stale_err = actions.replace(target, current.items, 1, original_tick)
+check(not stale_ok and stale_err:find("changed", 1, true))
+
+local refreshed = check(actions.read(target))
+local replacement = vim.deepcopy(refreshed.items)
+replacement[1].text = "updated"
+replacement[1].user_data.extra = "preserved"
+check(actions.replace(target, replacement, 1, refreshed.changedtick))
+local after_replace = check(actions.read(target))
+check(after_replace.title == "diagnostics")
+check(after_replace.context.source == "test")
+check(after_replace.items[1].user_data.extra == "preserved")
+
+vim.api.nvim_win_set_cursor(0, { 2, 0 })
+check(actions.delete_current())
+check(#check(actions.read(target)).items == 1)
+check(actions.clear(target))
+check(#check(actions.read(target)).items == 0)
+
+check(actions.close())
+check(not actions.is_open({ kind = "quickfix" }))
+check(actions.toggle({ kind = "quickfix" }))
+check(actions.is_open({ kind = "quickfix" }))
+check(actions.toggle({ kind = "quickfix" }))
+check(not actions.is_open({ kind = "quickfix" }))
+
+vim.fn.setqflist({}, "r", {
+	title = "picker",
+	items = {
+		{ filename = file, lnum = 3, text = "pick me" },
+		{ filename = file, lnum = 8, text = "find this" },
+	},
+})
+check(actions.open())
+local entries = check(actions.entries({ list = { kind = "quickfix", id = vim.fn.getqflist({ id = 0 }).id } }))
+check(#entries == 2 and entries[1].text == "pick me")
+local old_select = vim.ui.select
+local selected
+vim.ui.select = function(_, _, callback)
+	callback("pick me", 1)
+	selected = true
+end
+check(actions.pick({ list = entries[1].list }))
+check(selected)
+check(actions.open(entries[1].list))
+local search_format
+vim.ui.select = function(items, opts, callback)
+	search_format = opts.format_item(items[2])
+	callback(items[2], 2)
+end
+local source_buf = vim.api.nvim_get_current_buf()
+check(actions.search({ list = entries[1].list }))
+check(search_format:find("find this", 1, true) and vim.api.nvim_get_current_buf() == source_buf)
+check(vim.api.nvim_win_get_cursor(0)[1] == 2)
+vim.ui.select = old_select
+
+local picker_id = entries[1].list.id
+vim.fn.setqflist({}, "f", { id = picker_id })
+local freed_qf, freed_qf_err = actions.read(entries[1].list)
+check(not freed_qf and freed_qf_err:find("stale", 1, true))
+
+vim.cmd("cclose")
+vim.fn.setloclist(0, {}, "r", {
+	title = "local diagnostics",
+	context = { owner = true },
+	items = { { filename = file, lnum = 5, text = "local", user_data = { keep = "yes" } } },
+})
+local owner = vim.api.nvim_get_current_win()
+vim.cmd("lopen")
+local local_current = check(actions.current())
+check(local_current.kind == "location" and local_current.winid == owner)
+local local_target = { kind = "location", id = local_current.id, winid = owner }
+local local_value = check(actions.read(local_target))
+local local_items = vim.deepcopy(local_value.items)
+local_items[1].text = "local updated"
+check(actions.replace(local_target, local_items, 1, local_value.changedtick))
+local local_after = check(actions.read(local_target))
+check(local_after.title == "local diagnostics")
+check(local_after.context.owner and local_after.items[1].user_data.keep == "yes")
+
+local invalid_ok, invalid_err = actions.read({ kind = "location", id = local_target.id, winid = 999999 })
+check(not invalid_ok and invalid_err:find("invalid location", 1, true))
+check(actions.close(local_target))
+check(not actions.is_open({ kind = "location", winid = owner }))
+
+local freed_id = local_target.id
+vim.fn.setloclist(owner, {}, "f", { id = freed_id })
+local freed_value, freed_err = actions.read(local_target)
+check(not freed_value and freed_err:find("stale", 1, true))
+
+print("quickfix_actions tests passed")

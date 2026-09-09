@@ -1,0 +1,99 @@
+*quickfix-actions.nvim*  Native quickfix and location-list actions
+
+=============================================================================
+CONTENTS                                                       *quickfix-actions-contents*
+
+                 |quickfix-actions-installation|
+                 |quickfix-actions-setup|
+                 |quickfix-actions-commands|
+                 |quickfix-actions-api|
+
+Part of quickfix-kit.nvim:
+https://github.com/leolaurindo/quickfix-kit.nvim
+
+INSTALLATION                                                   *quickfix-actions-installation*
+
+lazy.nvim: >
+  { "leolaurindo/quickfix-actions.nvim", opts = {} }
+<
+
+vim.pack (Neovim 0.12+): >
+  vim.pack.add({ "https://github.com/leolaurindo/quickfix-actions.nvim" }, { load = true })
+  require("quickfix_actions").setup()
+<
+
+No runtime dependencies.
+
+SETUP                                                          *quickfix-actions-setup*
+
+  require("quickfix_actions").setup()
+
+The native list is canonical. Rendered quickfix buffers remain native and
+read-only; use the Lua API or commands to mutate a list.
+
+TARGETS                                                        *quickfix-actions-targets*
+
+Targets use stable native IDs: >
+  { kind = "quickfix", id = 42 }
+  { kind = "location", id = 17, winid = 1001 }
+<
+
+For a location list, winid is its owning file window. Stale IDs and invalid
+owners fail rather than falling back to another list.
+
+COMMANDS                                                       *quickfix-actions-commands*
+
+                                                        *QuickfixActionsOpen*
+:QuickfixActionsOpen [quickfix|location]  Open a list.
+                                                        *QuickfixActionsClose*
+:QuickfixActionsClose [quickfix|location]  Close a list.
+                                                       *QuickfixActionsToggle*
+:QuickfixActionsToggle [quickfix|location]  Toggle a list.
+                                                         *QuickfixActionsPick*
+:QuickfixActionsPick  Pick an entry and jump to its source.
+                                                       *QuickfixActionsSearch*
+:QuickfixActionsSearch  Search the current list and focus the selected row.
+                                                         *QuickfixActionsJump*
+:QuickfixActionsJump  Jump to the current entry.
+                                                       *QuickfixActionsDelete*
+:QuickfixActionsDelete  Delete the current entry.
+                                                *QuickfixActionsDeleteCurrent*
+:QuickfixActionsDeleteCurrent  Delete the current entry.
+                                                         *QuickfixActionsClear*
+:QuickfixActionsClear  Clear the current list.
+
+Default qf-local mappings are <CR> for jump and dd for delete. Set
+mappings.qf = false to install none.
+
+LUA API                                                       *quickfix-actions-api*
+
+The module provides read, current, item, replace, delete, delete_current,
+clear, jump, select, open, close, is_open, toggle, entries, pick, and search.
+Snapshots retain native fields and user_data. Mutations can check changedtick.
+
+|actions-search| searches the current native list by path and entry text. It uses
+Snacks' compact select picker when available and focuses the selected row in the
+open quickfix/location-list window without jumping to the source buffer. Without
+Snacks it falls back to vim.ui.select.
+
+                                                        *actions-search*
+:lua require('quickfix_actions').search({
+:  prompt = 'Search diagnostics',
+:  format_item = function(entry) return entry.path .. ' - ' .. entry.text end,
+:  on_confirm = function(entry)
+:    return require('quickfix_actions').select(entry.list, entry.index)
+:  end,
+:})
+
+                                                        *actions-select*
+:lua require('quickfix_actions').select(target, index)
+    Focus the native list window and place its cursor on index. This does not
+    jump to the source buffer.
+
+See also:
+- |quickfix-diffs.nvim|  Git diff lists
+- |quickfix-export.nvim|  List export
+- |quickfix-review.nvim|  Review notes
+
+==============================================================================
+ vim:tw=78:ts=8:ft=help:norl:
