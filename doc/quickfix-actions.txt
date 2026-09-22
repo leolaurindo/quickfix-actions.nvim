@@ -49,7 +49,9 @@ COMMANDS                                                       *quickfix-actions
 :QuickfixActionsClose [quickfix|location]  Close a list.
                                                        *QuickfixActionsToggle*
 :QuickfixActionsToggle [quickfix|location]  Toggle a list.
-                                                         *QuickfixActionsPick*
+                                                       *QuickfixActionsHistory*
+:QuickfixActionsHistory [quickfix|location]  Open the history browser.
+                                                        *QuickfixActionsPick*
 :QuickfixActionsPick  Pick an entry and jump to its source.
                                                        *QuickfixActionsSearch*
 :QuickfixActionsSearch  Search the current list and focus the selected row.
@@ -68,8 +70,19 @@ mappings.qf = false to install none.
 LUA API                                                       *quickfix-actions-api*
 
 The module provides read, current, item, replace, delete, delete_current,
-clear, jump, select, open, close, is_open, toggle, entries, pick, and search.
-Snapshots retain native fields and user_data. Mutations can check changedtick.
+clear, jump, select, open, close, is_open, toggle, history, open_history,
+entries, pick, and search. Snapshots retain native fields and user_data.
+Mutations can check changedtick.
+
+                                                        *actions-history*
+:lua require('quickfix_actions').history({ kind = 'quickfix' })
+    Return live history entries with their native ID, history number, title,
+    item count, and current state. Location-list history is scoped to winid.
+
+                                                   *actions-open-history*
+:lua require('quickfix_actions').open_history({ kind = 'quickfix' })
+    Open history entries in a native quickfix list. Press <CR> on an entry to
+    activate and open its referenced list.
 
 |actions-search| searches the current native list by path and entry text. It uses
 Snacks' compact select picker when available and focuses the selected row in the

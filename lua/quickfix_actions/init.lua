@@ -65,6 +65,13 @@ local function install_commands()
 			return M.pick()
 		end)
 	end, { desc = "Pick an entry from the current native list" })
+	command("QuickfixActionsHistory", function(opts)
+		report(function()
+			return M.open_history(command_target(opts))
+		end)
+	end, { nargs = "?", complete = function()
+		return { "quickfix", "location" }
+	end, desc = "Pick a native quickfix or location-list history entry" })
 	command("QuickfixActionsSearch", function()
 		report(function()
 			return M.search()
@@ -238,6 +245,18 @@ function M.entries(opts)
 	return picker.entries(opts)
 end
 
+function M.history(target)
+	return lists.history(target)
+end
+
+function M.open_history(target, opts)
+	local browser, err = lists.open_history(target)
+	if not browser then
+		return nil, err
+	end
+	return M.open(browser, opts)
+end
+
 function M.pick(opts)
 	return picker.pick(opts)
 end
@@ -257,6 +276,11 @@ function M.jump(target, index)
 	end
 	if not index or not value.items[index] then
 		return nil, "list entry is empty"
+	end
+	local user_data = value.items[index].user_data
+	local history = type(user_data) == "table" and user_data.quickfix_actions and user_data.quickfix_actions.history
+	if history then
+		return M.open(history)
 	end
 	if resolved.kind == "quickfix" then
 		select_history(value, resolved.kind)

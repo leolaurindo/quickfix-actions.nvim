@@ -1,5 +1,7 @@
 local M = {}
 
+local history_browsers = {}
+
 local function current_info()
 	return vim.fn.getwininfo(vim.api.nvim_get_current_win())[1]
 end
@@ -141,6 +143,105 @@ function M.read(target)
 		return nil, err
 	end
 	return get_list(resolved)
+end
+
+function M.history(target)
+	local resolved, err = resolved_target(target)
+	if not resolved then
+		return nil, err
+	end
+	resolved.id = nil
+	local get = resolved.kind == "location" and vim.fn.getloclist or vim.fn.getqflist
+	local owner = resolved.kind == "location" and resolved.winid
+	local request = { nr = "$" }
+	local ok, last
+	if owner then
+		ok, last = pcall(get, owner, request)
+	else
+		ok, last = pcall(get, request)
+	end
+	if not ok then
+		return nil, tostring(last)
+	end
+	local current, current_err = get_list(resolved)
+	if not current then
+		return nil, current_err
+	end
+	local entries = {}
+	for nr = 1, last.nr or 0 do
+		local value
+		if owner then
+			ok, value = pcall(get, owner, { nr = nr, all = 1 })
+		else
+			ok, value = pcall(get, { nr = nr, all = 1 })
+		end
+		local browser = value and value.context and value.context.quickfix_actions and value.context.quickfix_actions.history_browser
+		if ok and value and value.id and value.id > 0 and not browser then
+			entries[#entries + 1] = {
+				kind = resolved.kind,
+				id = value.id,
+				winid = resolved.winid,
+				nr = nr,
+				title = value.title,
+				count = #(value.items or {}),
+				current = value.id == current.id,
+			}
+		end
+	end
+	return entries
+end
+
+function M.history_text(info)
+	local items = vim.fn.getqflist({ id = info.id, items = 1 }).items
+	local lines = {}
+	for index = info.start_idx, info.end_idx do
+		lines[#lines + 1] = items[index].text
+	end
+	return lines
+end
+
+function M.open_history(target)
+	local entries, err = M.history(target)
+	if not entries then
+		return nil, err
+	end
+	if #entries == 0 then
+		return nil, "quickfix history is empty"
+	end
+	local items = {}
+	for _, entry in ipairs(entries) do
+		local title = entry.title and entry.title ~= "" and entry.title or "[untitled]"
+		items[#items + 1] = {
+			valid = 0,
+			text = ("%s%d: %s (%d items)"):format(entry.current and "* " or "  ", entry.nr, title, entry.count),
+			user_data = {
+				quickfix_actions = {
+					history = { kind = entry.kind, id = entry.id, winid = entry.winid },
+				},
+			},
+		}
+	end
+	local key = entries[1].kind == "location" and "location:" .. entries[1].winid or "quickfix"
+	local id = history_browsers[key]
+	local value = id and vim.fn.getqflist({ id = id })
+	local what = {
+		title = entries[1].kind == "location" and "Location-list history" or "Quickfix history",
+		context = { quickfix_actions = { history_browser = true } },
+		items = items,
+		quickfixtextfunc = M.history_text,
+	}
+	if value and value.id == id then
+		what.id = id
+	end
+	local ok, result = pcall(vim.fn.setqflist, {}, what.id and "r" or " ", what)
+	if not ok then
+		return nil, tostring(result)
+	end
+	if not what.id then
+		id = vim.fn.getqflist({ id = 0 }).id
+		history_browsers[key] = id
+	end
+	return { kind = "quickfix", id = id }
 end
 
 function M.current(target)

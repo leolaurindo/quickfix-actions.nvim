@@ -2,6 +2,7 @@
 
 Collection of native actions for Neovim quickfix and location lists.
 Open, close, jump, pick, delete, clear, and replace entries in Neovim's native list UI.
+It also opens history as native quickfix lists.
 No runtime dependencies.
 
 Requires Neovim 0.10+.
@@ -56,14 +57,18 @@ actions.clear()
 actions.open()
 actions.close()
 actions.toggle()
+actions.history()
+actions.open_history()
 actions.pick()
 actions.search()
 ```
 
 Available operations are `read`, `current`, `item`, `replace`, `delete`,
 `delete_current`, `clear`, `jump`, `select`, `open`, `close`, `is_open`,
-`toggle`, `entries`, `pick`, and `search`. Snapshots preserve native fields and
-`user_data`. Mutations can check an expected `changedtick`; `clear` and
+`toggle`, `history`, `open_history`, `entries`, `pick`, and `search`.
+`history()` returns live native quickfix or location-list history entries;
+`open_history()` opens them in a native quickfix list. Snapshots retain native
+fields and `user_data`. Mutations can check an expected `changedtick`; `clear` and
 `delete_current` use the snapshot tick they read.
 
 `entries()` returns picker entries. `pick()` uses `vim.ui.select` and native
@@ -93,6 +98,7 @@ actions.search({
 | `:QuickfixActionsOpen [quickfix\|location]` | Open a list |
 | `:QuickfixActionsClose [quickfix\|location]` | Close a list |
 | `:QuickfixActionsToggle [quickfix\|location]` | Toggle a list |
+| `:QuickfixActionsHistory [quickfix\|location]` | Open the history browser |
 | `:QuickfixActionsPick` | Pick an entry and jump to its source |
 | `:QuickfixActionsSearch` | Search the current list and focus the selected row |
 | `:QuickfixActionsJump` | Jump to the current entry |

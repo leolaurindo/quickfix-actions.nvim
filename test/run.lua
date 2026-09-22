@@ -11,6 +11,7 @@ actions.setup()
 check(vim.fn.exists(":QuickfixActionsOpen") == 2)
 check(vim.fn.exists(":QuickfixActionsDelete") == 2)
 check(vim.fn.exists(":QuickfixActionsSearch") == 2)
+check(vim.fn.exists(":QuickfixActionsHistory") == 2)
 
 local file = vim.fs.joinpath(vim.fn.getcwd(), "README.md")
 vim.fn.setqflist({}, "r", {
@@ -67,7 +68,12 @@ check(actions.is_open({ kind = "quickfix" }))
 check(actions.toggle({ kind = "quickfix" }))
 check(not actions.is_open({ kind = "quickfix" }))
 
-vim.fn.setqflist({}, "r", {
+vim.fn.setqflist({}, " ", {
+	title = "history first",
+	items = { { filename = file, lnum = 1, text = "first" } },
+})
+local history_first = vim.fn.getqflist({ id = 0 }).id
+vim.fn.setqflist({}, " ", {
 	title = "picker",
 	items = {
 		{ filename = file, lnum = 3, text = "pick me" },
@@ -77,6 +83,19 @@ vim.fn.setqflist({}, "r", {
 check(actions.open())
 local entries = check(actions.entries({ list = { kind = "quickfix", id = vim.fn.getqflist({ id = 0 }).id } }))
 check(#entries == 2 and entries[1].text == "pick me")
+local history = check(actions.history({ kind = "quickfix" }))
+check(history[#history].title == "picker" and history[#history].current)
+check(history[#history - 1].id == history_first and history[#history - 1].count == 1)
+check(actions.open_history({ kind = "quickfix" }))
+local history_browser = check(actions.current())
+local history_list = check(actions.read(history_browser))
+check(history_list.title == "Quickfix history" and history_list.items[#history - 1].text:find("history first", 1, true))
+check(vim.api.nvim_get_current_line() == history_list.items[1].text)
+check(actions.open_history({ kind = "quickfix" }))
+check(check(actions.current()).id == history_browser.id)
+check(actions.jump(history_browser, #history - 1))
+check(vim.fn.getqflist({ id = 0 }).id == history_first)
+check(actions.open(entries[1].list))
 local old_select = vim.ui.select
 local selected
 vim.ui.select = function(_, _, callback)
@@ -123,6 +142,19 @@ check(local_after.context.owner and local_after.items[1].user_data.keep == "yes"
 
 local invalid_ok, invalid_err = actions.read({ kind = "location", id = local_target.id, winid = 999999 })
 check(not invalid_ok and invalid_err:find("invalid location", 1, true))
+vim.api.nvim_set_current_win(owner)
+vim.fn.setloclist(owner, {}, " ", {
+	title = "local history second",
+	items = { { filename = file, lnum = 6, text = "local second" } },
+})
+local local_history = check(actions.history({ kind = "location", winid = owner }))
+check(local_history[#local_history].title == "local history second" and local_history[#local_history].current)
+check(local_history[#local_history - 1].id == local_target.id)
+check(actions.open_history({ kind = "location", winid = owner }))
+local local_history_browser = check(actions.current())
+check(check(actions.read(local_history_browser)).title == "Location-list history")
+check(actions.jump(local_history_browser, #local_history - 1))
+check(vim.fn.getloclist(owner, { id = 0 }).id == local_target.id)
 check(actions.close(local_target))
 check(not actions.is_open({ kind = "location", winid = owner }))
 
