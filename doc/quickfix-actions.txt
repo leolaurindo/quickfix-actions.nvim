@@ -48,12 +48,15 @@ COMMANDS                                                       *quickfix-actions
 
                                                   *QuickfixActionsLayoutToggle*
 :QuickfixActionsLayoutToggle [quickfix|location]
-    Cycle an open list bottom -> left -> top -> right -> bottom. If closed,
-    open it at its remembered layout, or the configured initial layout.
+    Cycle an open list bottom -> left -> top -> right -> bottom. Full is not in
+    the cycle; toggling from full starts at bottom. If closed, open it at its
+    remembered layout, or the configured initial layout.
                                                      *QuickfixActionsLayout*
-:QuickfixActionsLayout {top|left|right|bottom} [quickfix|location]
-    Reopen the current native list at the requested edge. The current list kind
-    is used by default; location lists use the current file window or the owner
+:QuickfixActionsLayout {full|top|left|right|bottom} [quickfix|location]
+    Reopen the current native list in a full tab or at the requested edge. Full
+    opens a dedicated tab and preserves the existing window layout. The
+    current list kind is used by default; location lists use the current file
+    window or the owner
     of the current location-list window. Horizontal and vertical are accepted
     as aliases for bottom and right.
                                                        *QuickfixActionsHistory*
@@ -108,9 +111,10 @@ delete, delete_current, clear, jump, select, open, close, is_open, toggle,
 history, open_history, choose_history, entries, pick, and search. Snapshots
 retain native fields and user_data. Mutations can check changedtick.
 
-open(target, opts) accepts layout='top'|'left'|'right'|'bottom'. Left/right use
-width; top/bottom use height. The existing vertical=true/width API and default
-horizontal/height behavior remain supported. layout='horizontal' and
+open(target, opts) accepts layout='full'|'top'|'left'|'right'|'bottom'. Full
+opens the list in a dedicated tab. Left/right use width; top/bottom use height.
+The existing vertical=true/width API and default horizontal/height behavior
+remain supported. layout='horizontal' and
 layout='vertical' remain aliases for bottom and right. Optional wrap, linebreak,
 and breakindent booleans are applied only to the opened list window. toggle()
 and open_history() accept these same options.

@@ -16,11 +16,15 @@ local defaults = {
 local config = vim.deepcopy(defaults)
 local setup_done = false
 local remembered_layouts = {}
+local remembered_windows = {}
 local layout_cycle = { "bottom", "left", "top", "right" }
 local layout_aliases = { horizontal = "bottom", vertical = "right" }
 
 local function normalize_layout(layout)
 	layout = layout_aliases[layout] or layout
+	if layout == "full" then
+		return layout
+	end
 	for _, value in ipairs(layout_cycle) do
 		if value == layout then
 			return value
@@ -40,6 +44,29 @@ end
 
 local function target_layout(target)
 	return remembered_layouts[target_key(target)] or config.layout
+end
+
+local function target_window(target)
+	local winid = lists.window(target)
+	if winid then
+		return winid
+	end
+	winid = remembered_windows[target_key(target)]
+	if not winid or not vim.api.nvim_win_is_valid(winid) then
+		return
+	end
+	local info = vim.fn.getwininfo(winid)[1]
+	if not info or info.quickfix ~= 1 then
+		return
+	end
+	if target.kind == "location" then
+		local ok, value = pcall(vim.fn.getloclist, winid, { all = 1 })
+		if ok and value.id == target.id and value.filewinid == target.winid then
+			return winid
+		end
+	elseif vim.fn.getqflist({ id = 0 }).id == target.id then
+		return winid
+	end
 end
 
 local function next_layout(layout)
@@ -75,6 +102,17 @@ local function command(name, callback, opts)
 end
 
 local function window_layout(winid)
+	local previous = vim.api.nvim_get_current_win()
+	if previous ~= winid then
+		vim.api.nvim_set_current_win(winid)
+	end
+	local tree = vim.fn.winlayout()
+	if previous ~= winid and vim.api.nvim_win_is_valid(previous) then
+		vim.api.nvim_set_current_win(previous)
+	end
+	if tree[1] == "leaf" and tree[2] == winid then
+		return "full"
+	end
 	local function locate(node)
 		if node[1] == "leaf" then
 			return node[2] == winid, nil
@@ -95,8 +133,20 @@ local function window_layout(winid)
 		end
 		return false
 	end
-	local _, layout = locate(vim.fn.winlayout())
+	local _, layout = locate(tree)
 	return layout
+end
+
+local function close_list_window(winid, kind, target)
+	vim.api.nvim_set_current_win(winid)
+	if window_layout(winid) == "full" then
+		vim.cmd("silent tabclose")
+	else
+		vim.cmd("silent " .. (kind == "location" and "lclose" or "cclose"))
+	end
+	if target then
+		remembered_windows[target_key(target)] = nil
+	end
 end
 
 local function install_commands()
@@ -115,7 +165,7 @@ local function install_commands()
 				return nil, err
 			end
 			target = { kind = current.kind, id = current.id, winid = current.winid }
-			local winid = lists.window(target)
+			local winid = target_window(target)
 			local layout
 			if winid then
 				layout = window_layout(winid)
@@ -140,14 +190,14 @@ local function install_commands()
 			local layout, kind = unpack(opts.fargs)
 			layout = normalize_layout(layout)
 			if not layout then
-				return nil, "usage: QuickfixActionsLayout top|left|right|bottom [quickfix|location]"
+				return nil, "usage: QuickfixActionsLayout full|top|left|right|bottom [quickfix|location]"
 			end
 			kind = kind or lists.current_kind()
 			if kind ~= "quickfix" and kind ~= "location" then
 				return nil, "list kind must be quickfix or location"
 			end
 			if #opts.fargs > 2 then
-				return nil, "usage: QuickfixActionsLayout top|left|right|bottom [quickfix|location]"
+				return nil, "usage: QuickfixActionsLayout full|top|left|right|bottom [quickfix|location]"
 			end
 			local current, err = M.current({ kind = kind })
 			if not current then
@@ -165,7 +215,7 @@ local function install_commands()
 	end, { nargs = "+", complete = function(_, line)
 		local args = vim.split(line, "%s+")
 		if #args <= 2 then
-			return { "top", "left", "right", "bottom" }
+			return { "full", "top", "left", "right", "bottom" }
 		end
 		return { "quickfix", "location" }
 	end, desc = "Set the current native list split position" })
@@ -389,7 +439,7 @@ function M.setup(opts)
 	config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
 	config.layout = normalize_layout(config.layout) or defaults.layout
 	if opts and opts.layout and not normalize_layout(opts.layout) then
-		notify("layout must be top, left, right, or bottom", vim.log.levels.WARN)
+		notify("layout must be full, top, left, right, or bottom", vim.log.levels.WARN)
 	end
 	if opts and opts.mappings and opts.mappings.qf == false then
 		config.mappings.qf = false
@@ -549,16 +599,15 @@ function M.open(target, opts)
 		layout = "right"
 	end
 	if explicit_layout and not layout then
-		return nil, "layout must be top, left, right, or bottom"
+		return nil, "layout must be full, top, left, right, or bottom"
 	end
 	local focus = options.focus ~= false
 	local owner = resolved.kind == "location" and resolved.winid
 	local ok, err = with_owner(owner, focus, function()
 		if explicit_layout or options.vertical then
-			local existing = lists.window(resolved)
+			local existing = target_window(resolved)
 			if existing then
-				vim.api.nvim_set_current_win(existing)
-				vim.cmd("silent " .. (resolved.kind == "location" and "lclose" or "cclose"))
+				close_list_window(existing, resolved.kind, resolved)
 				if owner and vim.api.nvim_win_is_valid(owner) then
 					vim.api.nvim_set_current_win(owner)
 				end
@@ -567,6 +616,7 @@ function M.open(target, opts)
 		select_history(value, resolved.kind)
 		local command_name = resolved.kind == "location" and "lopen" or "copen"
 		local layout_commands = {
+			full = "tab " .. command_name,
 			top = "topleft " .. command_name,
 			left = "topleft vertical " .. command_name,
 			right = "botright vertical " .. command_name,
@@ -576,7 +626,7 @@ function M.open(target, opts)
 			or options.vertical and ("vertical " .. command_name)
 			or command_name
 		local height = tonumber(options.height)
-		if height and not (layout == "left" or layout == "right") then
+		if height and layout ~= "full" and not (layout == "left" or layout == "right") then
 			vim.cmd(("silent %s %d"):format(open_command, height))
 		else
 			vim.cmd("silent " .. open_command)
@@ -591,6 +641,7 @@ function M.open(target, opts)
 		end
 		local actual_layout = window_layout(qfwin) or layout or "bottom"
 		remember_layout(resolved, actual_layout)
+		remembered_windows[target_key(resolved)] = qfwin
 		for option, enabled in pairs({ wrap = options.wrap, linebreak = options.linebreak, breakindent = options.breakindent }) do
 			if enabled ~= nil then
 				vim.api.nvim_set_option_value(option, enabled, { win = qfwin })
@@ -609,19 +660,31 @@ function M.close(target, opts)
 	if kind ~= "quickfix" and kind ~= "location" then
 		return nil, "kind must be quickfix or location"
 	end
-	if target and target.id then
-		local value, err = lists.read(target)
+	local close_target = target
+	if not close_target or not close_target.id then
+		local current = lists.current(close_target or { kind = kind, winid = opts.winid, id = opts.id })
+		if current then
+			close_target = { kind = current.kind, id = current.id, winid = current.winid }
+		end
+	end
+	if close_target and close_target.id then
+		local value, err = lists.read(close_target)
 		if not value then
 			return nil, err
 		end
 	end
+	local existing = close_target and close_target.id and target_window(close_target)
 	local owner = kind == "location" and (target and target.winid or lists.current_owner())
 	if kind == "location" and (not owner or not vim.api.nvim_win_is_valid(owner)) then
 		return nil, "invalid location-list owner window"
 	end
 	local focus = opts.focus ~= false
 	local ok, err = with_owner(owner, focus, function()
-		vim.cmd("silent " .. (kind == "location" and "lclose" or "cclose"))
+		if existing and vim.api.nvim_win_is_valid(existing) then
+			close_list_window(existing, kind, close_target)
+		else
+			vim.cmd("silent " .. (kind == "location" and "lclose" or "cclose"))
+		end
 	end)
 	if not ok then
 		return nil, tostring(err)
@@ -631,10 +694,11 @@ end
 
 function M.is_open(target)
 	if target and target.id then
-		local value, err = lists.read(target)
+		local value, err, resolved = lists.read(target)
 		if not value then
 			return nil, err
 		end
+		return target_window(resolved) ~= nil
 	end
 	local kind = target and target.kind or lists.current_kind()
 	local owner = kind == "location" and (target and target.winid or lists.current_owner())
@@ -661,7 +725,7 @@ function M.toggle(target, opts)
 	if not value then
 		return nil, err
 	end
-	local winid = lists.window(resolved)
+	local winid = target_window(resolved)
 	if winid then
 		remember_layout(resolved, window_layout(winid))
 		return M.close(resolved, opts)
