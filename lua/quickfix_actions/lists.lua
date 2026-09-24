@@ -126,6 +126,14 @@ local function list_window(resolved)
 	end
 end
 
+function M.window(target)
+	local value, err, resolved = M.read(target)
+	if not value then
+		return nil, err
+	end
+	return list_window(resolved)
+end
+
 local function current_index(resolved, value)
 	local index = value.idx or 0
 	if displayed(resolved, value) then
@@ -213,7 +221,7 @@ function M.open_history(target)
 		local title = entry.title and entry.title ~= "" and entry.title or "[untitled]"
 		items[#items + 1] = {
 			valid = 0,
-			text = ("%s%d: %s (%d items)"):format(entry.current and "* " or "  ", entry.nr, title, entry.count),
+			text = ("%s%d: %s (#%d, %d items)"):format(entry.current and "* " or "  ", entry.nr, title, entry.id, entry.count),
 			user_data = {
 				quickfix_actions = {
 					history = { kind = entry.kind, id = entry.id, winid = entry.winid },
@@ -330,12 +338,97 @@ function M.replace(target, items, idx, expected_tick)
 	return set_list(resolved, value, items, idx == nil and value.idx or idx)
 end
 
+function M.append(target, items, expected_tick)
+	if type(items) ~= "table" then
+		return nil, "items must be a table"
+	end
+	local value, err, resolved = M.read(target)
+	if not value then
+		return nil, err
+	end
+	if expected_tick ~= nil and value.changedtick ~= expected_tick then
+		return nil, "list changed while it was being edited"
+	end
+	local appended = vim.deepcopy(value.items or {})
+	for _, item in ipairs(items) do
+		appended[#appended + 1] = vim.deepcopy(item)
+	end
+	return M.replace(resolved, appended, value.idx, value.changedtick)
+end
+
+function M.set_text(target, index, text, expected_tick)
+	if type(text) ~= "string" then
+		return nil, "text must be a string"
+	end
+	local value, err, resolved = M.read(target)
+	if not value then
+		return nil, err
+	end
+	if expected_tick ~= nil and value.changedtick ~= expected_tick then
+		return nil, "list changed while it was being edited"
+	end
+	if type(index) ~= "number" or index % 1 ~= 0 or not value.items[index] then
+		return nil, "list entry is empty"
+	end
+	local items = vim.deepcopy(value.items)
+	items[index].text = text
+	return M.replace(resolved, items, value.idx, value.changedtick)
+end
+
 function M.clear(target)
 	local value, err, resolved = M.read(target)
 	if not value then
 		return nil, err
 	end
 	return M.replace(resolved, {}, 0, value.changedtick)
+end
+
+function M.add_file(target, file, first, last, expected_tick)
+	if type(file) ~= "string" or file == "" then
+		return nil, "file must be a non-empty path"
+	end
+	local item = { filename = file }
+	if first ~= nil or last ~= nil then
+		first = tonumber(first)
+		last = tonumber(last or first)
+		if
+			not first
+			or not last
+			or first < 1
+			or last < first
+			or first % 1 ~= 0
+			or last % 1 ~= 0
+		then
+			return nil, "range must contain positive, ordered line numbers"
+		end
+		item.lnum = first
+		item.end_lnum = last
+	end
+	return M.append(target, { item }, expected_tick)
+end
+
+function M.choose_history(target, callback)
+	if type(callback) ~= "function" then
+		return nil, "callback must be a function"
+	end
+	local entries, err = M.history(target)
+	if not entries then
+		return nil, err
+	end
+	if #entries == 0 then
+		return nil, "quickfix history is empty"
+	end
+	local labels = {}
+	for _, entry in ipairs(entries) do
+		local title = entry.title and entry.title ~= "" and entry.title or "[untitled]"
+		labels[#labels + 1] = ("%s (#%d, %d items)"):format(title, entry.id, entry.count)
+	end
+	vim.ui.select(labels, { prompt = "Quickfix history" }, function(_, index)
+		if index then
+			callback({ kind = entries[index].kind, id = entries[index].id, winid = entries[index].winid })
+		end
+	end)
+	return true
 end
 
 function M.delete(target, index, expected_tick)
