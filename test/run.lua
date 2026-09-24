@@ -7,10 +7,63 @@ local function check(value, message)
 	return value
 end
 
+local function check_vertical_window(win)
+	local info = check(vim.fn.getwininfo(win)[1])
+	local peer
+	for _, candidate in ipairs(vim.api.nvim_list_wins()) do
+		if candidate ~= win and vim.fn.getwininfo(candidate)[1].quickfix ~= 1 then
+			peer = candidate
+			break
+		end
+	end
+	check(peer, "vertical quickfix window must have a neighboring editor window")
+	local peer_info = check(vim.fn.getwininfo(peer)[1])
+	check(info.winrow == peer_info.winrow, "vertical quickfix and editor windows should share a row")
+	check(vim.api.nvim_win_get_width(win) < vim.api.nvim_win_get_width(peer), "quickfix window should occupy a side split")
+end
+
+local function check_horizontal_window(win)
+	local info = check(vim.fn.getwininfo(win)[1])
+	local peer
+	for _, candidate in ipairs(vim.api.nvim_list_wins()) do
+		if candidate ~= win and vim.fn.getwininfo(candidate)[1].quickfix ~= 1 then
+			peer = candidate
+			break
+		end
+	end
+	check(peer, "horizontal quickfix window must have a neighboring editor window")
+	local peer_info = check(vim.fn.getwininfo(peer)[1])
+	check(info.wincol == peer_info.wincol, "horizontal quickfix and editor windows should share a column")
+	check(info.winrow ~= peer_info.winrow, "horizontal quickfix and editor windows should occupy separate rows")
+	check(vim.api.nvim_win_get_width(win) == vim.api.nvim_win_get_width(peer), "horizontal windows should have equal width")
+end
+
+local function check_layout_position(win, layout)
+	local info = check(vim.fn.getwininfo(win)[1])
+	local peer
+	for _, candidate in ipairs(vim.api.nvim_list_wins()) do
+		if candidate ~= win and vim.fn.getwininfo(candidate)[1].quickfix ~= 1 then
+			peer = candidate
+			break
+		end
+	end
+	check(peer, "native list must have a neighboring editor window")
+	local peer_info = check(vim.fn.getwininfo(peer)[1])
+	if layout == "left" or layout == "right" then
+		check(info.winrow == peer_info.winrow, "side list should share its peer's row")
+		check(layout == "left" and info.wincol < peer_info.wincol or layout == "right" and info.wincol > peer_info.wincol, "list is on the requested side")
+	else
+		check(info.wincol == peer_info.wincol and info.width == peer_info.width, "top/bottom list should share its peer's column and width")
+		check(layout == "top" and info.winrow < peer_info.winrow or layout == "bottom" and info.winrow > peer_info.winrow, "list is on the requested edge")
+	end
+end
+
 actions.setup()
 check(vim.fn.exists(":QuickfixActionsOpen") == 0)
 check(vim.fn.exists(":QuickfixActionsClose") == 0)
 check(vim.fn.exists(":QuickfixActionsToggle") == 2)
+check(vim.fn.exists(":QuickfixActionsLayoutToggle") == 2)
+check(vim.fn.exists(":QuickfixActionsLayout") == 2)
 check(vim.fn.exists(":QuickfixActionsDelete") == 2)
 check(vim.fn.exists(":QuickfixActionsSearch") == 2)
 check(vim.fn.exists(":QuickfixActionsHistory") == 2)
@@ -158,11 +211,33 @@ local local_history_browser = check(actions.current())
 check(check(actions.read(local_history_browser)).title == "Location-list history")
 check(actions.jump(local_history_browser, #local_history - 1))
 check(vim.fn.getloclist(owner, { id = 0 }).id == local_target.id)
+vim.api.nvim_set_current_win(owner)
+vim.cmd("QuickfixActionsLayout vertical location")
+local layout_location_win = vim.api.nvim_get_current_win()
+check(vim.fn.getwininfo(layout_location_win)[1].loclist == 1)
+check_vertical_window(layout_location_win)
+vim.cmd("QuickfixActionsLayout horizontal location")
+local horizontal_location_win = vim.api.nvim_get_current_win()
+check(vim.fn.getwininfo(horizontal_location_win)[1].loclist == 1)
+check_horizontal_window(horizontal_location_win)
 check(actions.close(local_target))
 check(actions.open(local_target, { vertical = true, width = 29 }))
 local location_qfwin = vim.api.nvim_get_current_win()
 check(vim.fn.getwininfo(location_qfwin)[1].loclist == 1)
 check(vim.api.nvim_win_get_width(location_qfwin) == 29)
+check_vertical_window(location_qfwin)
+check(actions.close(local_target))
+for _, layout in ipairs({ "top", "left", "right", "bottom" }) do
+	vim.api.nvim_set_current_win(owner)
+	vim.cmd("QuickfixActionsLayout " .. layout .. " location")
+	local location_win = vim.api.nvim_get_current_win()
+	check(vim.fn.getwininfo(location_win)[1].loclist == 1)
+	check_layout_position(location_win, layout)
+end
+for _, layout in ipairs({ "left", "top", "right", "bottom" }) do
+	vim.cmd("QuickfixActionsLayoutToggle location")
+	check_layout_position(vim.api.nvim_get_current_win(), layout)
+end
 check(actions.close(local_target))
 check(not actions.is_open({ kind = "location", winid = owner }))
 
@@ -248,6 +323,7 @@ check(actions.open(add_target, { vertical = true, width = 31, wrap = true, lineb
 local qfwin = vim.api.nvim_get_current_win()
 check(vim.fn.getwininfo(qfwin)[1].quickfix == 1)
 check(vim.api.nvim_win_get_width(qfwin) == 31)
+check_vertical_window(qfwin)
 check(vim.wo[qfwin].wrap and vim.wo[qfwin].linebreak and vim.wo[qfwin].breakindent)
 vim.api.nvim_win_set_cursor(qfwin, { 2, 0 })
 vim.cmd("QuickfixActionsSetText added manual message")
@@ -258,11 +334,58 @@ check(vim.api.nvim_win_get_height(0) == 7)
 check(actions.close())
 check(actions.toggle(add_target, { vertical = true, width = 30 }))
 check(actions.is_open(add_target) and vim.api.nvim_win_get_width(0) == 30)
+check_vertical_window(vim.api.nvim_get_current_win())
 check(actions.toggle(add_target))
 check(actions.open_history({ kind = "quickfix" }, { vertical = true, width = 32, wrap = true }))
 local browser_win = vim.api.nvim_get_current_win()
 check(vim.fn.getwininfo(browser_win)[1].quickfix == 1)
 check(vim.api.nvim_win_get_width(browser_win) == 32 and vim.wo[browser_win].wrap)
+check_vertical_window(browser_win)
 check(actions.close())
+vim.cmd("QuickfixActionsLayout vertical")
+local layout_quickfix_win = vim.api.nvim_get_current_win()
+check(vim.fn.getwininfo(layout_quickfix_win)[1].loclist == 0)
+check_vertical_window(layout_quickfix_win)
+vim.cmd("QuickfixActionsLayout horizontal quickfix")
+local horizontal_quickfix_win = vim.api.nvim_get_current_win()
+check(vim.fn.getwininfo(horizontal_quickfix_win)[1].loclist == 0)
+check_horizontal_window(horizontal_quickfix_win)
+for _, layout in ipairs({ "left", "top", "right", "bottom" }) do
+	vim.cmd("QuickfixActionsLayout " .. layout .. " quickfix")
+	check_layout_position(vim.api.nvim_get_current_win(), layout)
+end
+for _, layout in ipairs({ "left", "top", "right", "bottom" }) do
+	vim.cmd("QuickfixActionsLayoutToggle quickfix")
+	check_layout_position(vim.api.nvim_get_current_win(), layout)
+end
+check(actions.close())
+vim.cmd("QuickfixActionsLayoutToggle quickfix")
+check_layout_position(vim.api.nvim_get_current_win(), "bottom")
+check(actions.close())
+vim.cmd("QuickfixActionsToggle quickfix")
+check(actions.is_open({ kind = "quickfix" }))
+check_layout_position(vim.api.nvim_get_current_win(), "bottom")
+vim.cmd("QuickfixActionsToggle quickfix")
+check(not actions.is_open({ kind = "quickfix" }))
+
+actions.setup({ layout = "left" })
+vim.fn.setqflist({}, " ", { title = "configured layout", items = { { filename = file, lnum = 1, text = "configured" } } })
+vim.cmd("QuickfixActionsToggle quickfix")
+check_layout_position(vim.api.nvim_get_current_win(), "left")
+vim.cmd("QuickfixActionsLayout top quickfix")
+check_layout_position(vim.api.nvim_get_current_win(), "top")
+vim.cmd("QuickfixActionsToggle quickfix")
+vim.cmd("QuickfixActionsToggle quickfix")
+check_layout_position(vim.api.nvim_get_current_win(), "top")
+vim.cmd("QuickfixActionsToggle quickfix")
+vim.cmd("vsplit")
+vim.cmd("QuickfixActionsLayout top quickfix")
+local full_width_qf = vim.fn.getwininfo(vim.api.nvim_get_current_win())[1]
+check(full_width_qf.quickfix == 1 and full_width_qf.winrow == 1)
+vim.cmd("QuickfixActionsLayoutToggle quickfix")
+local side_qf = vim.fn.getwininfo(vim.api.nvim_get_current_win())[1]
+check(side_qf.quickfix == 1 and side_qf.wincol > 1 and side_qf.width < full_width_qf.width)
+check(actions.close())
+vim.cmd("only")
 
 print("quickfix_actions tests passed")

@@ -4,6 +4,7 @@ local picker = require("quickfix_actions.picker")
 local M = {}
 
 local defaults = {
+	layout = "bottom",
 	mappings = {
 		qf = {
 			["<CR>"] = "jump",
@@ -14,6 +15,41 @@ local defaults = {
 
 local config = vim.deepcopy(defaults)
 local setup_done = false
+local remembered_layouts = {}
+local layout_cycle = { "bottom", "left", "top", "right" }
+local layout_aliases = { horizontal = "bottom", vertical = "right" }
+
+local function normalize_layout(layout)
+	layout = layout_aliases[layout] or layout
+	for _, value in ipairs(layout_cycle) do
+		if value == layout then
+			return value
+		end
+	end
+end
+
+local function target_key(target)
+	return table.concat({ target.kind, target.id or 0, target.winid or 0 }, ":")
+end
+
+local function remember_layout(target, layout)
+	if target and target.id then
+		remembered_layouts[target_key(target)] = layout
+	end
+end
+
+local function target_layout(target)
+	return remembered_layouts[target_key(target)] or config.layout
+end
+
+local function next_layout(layout)
+	for index, value in ipairs(layout_cycle) do
+		if value == layout then
+			return layout_cycle[index % #layout_cycle + 1]
+		end
+	end
+	return layout_cycle[1]
+end
 
 local function notify(message, level)
 	vim.notify(message, level, { title = "QuickfixActions" })
@@ -38,6 +74,31 @@ local function command(name, callback, opts)
 	vim.api.nvim_create_user_command(name, callback, vim.tbl_extend("force", { force = true }, opts or {}))
 end
 
+local function window_layout(winid)
+	local function locate(node)
+		if node[1] == "leaf" then
+			return node[2] == winid, nil
+		end
+		local children = node[2]
+		for index, child in ipairs(children) do
+			local found, layout = locate(child)
+			if found then
+				if layout or #children == 1 then
+					return true, layout
+				end
+				local before_middle = index <= #children / 2
+				if node[1] == "row" then
+					return true, before_middle and "left" or "right"
+				end
+				return true, before_middle and "top" or "bottom"
+			end
+		end
+		return false
+	end
+	local _, layout = locate(vim.fn.winlayout())
+	return layout
+end
+
 local function install_commands()
 	command("QuickfixActionsToggle", function(opts)
 		report(function()
@@ -45,7 +106,69 @@ local function install_commands()
 		end)
 	end, { nargs = "?", complete = function()
 		return { "quickfix", "location" }
+	end, desc = "Toggle a native quickfix or location list window" })
+	command("QuickfixActionsLayoutToggle", function(opts)
+		report(function()
+			local target = command_target(opts)
+			local current, err = M.current(target)
+			if not current then
+				return nil, err
+			end
+			target = { kind = current.kind, id = current.id, winid = current.winid }
+			local winid = lists.window(target)
+			local layout
+			if winid then
+				layout = window_layout(winid)
+				if not layout then
+					return nil, "could not determine native list position"
+				end
+				layout = next_layout(layout)
+				local ok, close_err = M.close(target)
+				if not ok then
+					return nil, close_err
+				end
+			else
+				layout = target_layout(target)
+			end
+			return M.open(target, { layout = layout })
+		end)
+	end, { nargs = "?", complete = function()
+		return { "quickfix", "location" }
 	end, desc = "Toggle a native quickfix or location list" })
+	command("QuickfixActionsLayout", function(opts)
+		report(function()
+			local layout, kind = unpack(opts.fargs)
+			layout = normalize_layout(layout)
+			if not layout then
+				return nil, "usage: QuickfixActionsLayout top|left|right|bottom [quickfix|location]"
+			end
+			kind = kind or lists.current_kind()
+			if kind ~= "quickfix" and kind ~= "location" then
+				return nil, "list kind must be quickfix or location"
+			end
+			if #opts.fargs > 2 then
+				return nil, "usage: QuickfixActionsLayout top|left|right|bottom [quickfix|location]"
+			end
+			local current, err = M.current({ kind = kind })
+			if not current then
+				return nil, err
+			end
+			local target = { kind = current.kind, id = current.id, winid = current.winid }
+			if M.is_open(target) then
+				local ok, close_err = M.close(target)
+				if not ok then
+					return nil, close_err
+				end
+			end
+			return M.open(target, { layout = layout })
+		end)
+	end, { nargs = "+", complete = function(_, line)
+		local args = vim.split(line, "%s+")
+		if #args <= 2 then
+			return { "top", "left", "right", "bottom" }
+		end
+		return { "quickfix", "location" }
+	end, desc = "Set the current native list split position" })
 	command("QuickfixActionsPick", function()
 		report(function()
 			return M.pick()
@@ -264,6 +387,10 @@ end
 
 function M.setup(opts)
 	config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
+	config.layout = normalize_layout(config.layout) or defaults.layout
+	if opts and opts.layout and not normalize_layout(opts.layout) then
+		notify("layout must be top, left, right, or bottom", vim.log.levels.WARN)
+	end
 	if opts and opts.mappings and opts.mappings.qf == false then
 		config.mappings.qf = false
 	elseif opts and opts.qf_mappings then
@@ -414,10 +541,20 @@ function M.open(target, opts)
 	if not value then
 		return nil, resolved
 	end
+	local explicit_layout = options.layout ~= nil
+	local layout
+	if explicit_layout then
+		layout = normalize_layout(options.layout)
+	elseif options.vertical then
+		layout = "right"
+	end
+	if explicit_layout and not layout then
+		return nil, "layout must be top, left, right, or bottom"
+	end
 	local focus = options.focus ~= false
 	local owner = resolved.kind == "location" and resolved.winid
 	local ok, err = with_owner(owner, focus, function()
-		if options.vertical then
+		if explicit_layout or options.vertical then
 			local existing = lists.window(resolved)
 			if existing then
 				vim.api.nvim_set_current_win(existing)
@@ -429,25 +566,31 @@ function M.open(target, opts)
 		end
 		select_history(value, resolved.kind)
 		local command_name = resolved.kind == "location" and "lopen" or "copen"
-		if options.vertical then
-			vim.cmd("silent vertical " .. command_name)
-			local width = tonumber(options.width)
-			if width then
-				vim.cmd(("silent vertical resize %d"):format(width))
-			end
+		local layout_commands = {
+			top = "topleft " .. command_name,
+			left = "topleft vertical " .. command_name,
+			right = "botright vertical " .. command_name,
+			bottom = "botright " .. command_name,
+		}
+		local open_command = explicit_layout and layout_commands[layout]
+			or options.vertical and ("vertical " .. command_name)
+			or command_name
+		local height = tonumber(options.height)
+		if height and not (layout == "left" or layout == "right") then
+			vim.cmd(("silent %s %d"):format(open_command, height))
 		else
-			local height = tonumber(options.height)
-			if height then
-				vim.cmd(("silent %s %d"):format(command_name, height))
-			else
-				vim.cmd("silent " .. command_name)
-			end
+			vim.cmd("silent " .. open_command)
 		end
 		local qfwin = vim.api.nvim_get_current_win()
-		local width = options.vertical and tonumber(options.width)
-		if width and vim.api.nvim_win_is_valid(qfwin) then
+		local width = tonumber(options.width)
+		if width and (layout == "left" or layout == "right" or options.vertical) then
 			vim.api.nvim_win_set_width(qfwin, width)
 		end
+		if height and explicit_layout and (layout == "top" or layout == "bottom") then
+			vim.api.nvim_win_set_height(qfwin, height)
+		end
+		local actual_layout = window_layout(qfwin) or layout or "bottom"
+		remember_layout(resolved, actual_layout)
 		for option, enabled in pairs({ wrap = options.wrap, linebreak = options.linebreak, breakindent = options.breakindent }) do
 			if enabled ~= nil then
 				vim.api.nvim_set_option_value(option, enabled, { win = qfwin })
@@ -514,10 +657,20 @@ end
 
 function M.toggle(target, opts)
 	target, opts = normalize_lifecycle_target(target, opts)
-	if M.is_open(target) then
-		return M.close(target, opts)
+	local value, err, resolved = lists.read(target)
+	if not value then
+		return nil, err
 	end
-	return M.open(target, opts)
+	local winid = lists.window(resolved)
+	if winid then
+		remember_layout(resolved, window_layout(winid))
+		return M.close(resolved, opts)
+	end
+	opts = opts or {}
+	if opts.layout == nil and opts.vertical == nil then
+		opts.layout = target_layout(resolved)
+	end
+	return M.open(resolved, opts)
 end
 
 return M
