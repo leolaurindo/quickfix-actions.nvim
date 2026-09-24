@@ -39,20 +39,6 @@ local function command(name, callback, opts)
 end
 
 local function install_commands()
-	command("QuickfixActionsOpen", function(opts)
-		report(function()
-			return M.open(command_target(opts))
-		end)
-	end, { nargs = "?", complete = function()
-		return { "quickfix", "location" }
-	end, desc = "Open a native quickfix or location list" })
-	command("QuickfixActionsClose", function(opts)
-		report(function()
-			return M.close(command_target(opts))
-		end)
-	end, { nargs = "?", complete = function()
-		return { "quickfix", "location" }
-	end, desc = "Close a native quickfix or location list" })
 	command("QuickfixActionsToggle", function(opts)
 		report(function()
 			return M.toggle(command_target(opts))
@@ -97,6 +83,104 @@ local function install_commands()
 			return M.clear()
 		end)
 	end, { desc = "Clear the current native list" })
+	local function add_current(target, first, last)
+		local file = vim.api.nvim_buf_get_name(0)
+		return M.add_file(target, file, first, last)
+	end
+	command("QuickfixActionsAddCurrent", function(opts)
+		report(function()
+			local id = opts.args ~= "" and tonumber(opts.args) or nil
+			if opts.args ~= "" and not id then
+				return nil, "quickfix list ID must be a number"
+			end
+			return add_current({ kind = "quickfix", id = id })
+		end)
+	end, { nargs = "?", desc = "Add the current file to the current or specified quickfix list" })
+	command("QuickfixActionsAddRange", function(opts)
+		report(function()
+			local id = opts.args ~= "" and tonumber(opts.args) or nil
+			if opts.args ~= "" and not id then
+				return nil, "quickfix list ID must be a number"
+			end
+			return add_current({ kind = "quickfix", id = id }, opts.line1, opts.line2)
+		end)
+	end, { nargs = "?", range = true, desc = "Add the current file and selected range to the current or specified quickfix list" })
+	local function command_range(value)
+		if not value then
+			return nil, nil, true
+		end
+		local first, last = value:match("^(%d+):(%d+)$")
+		if not first then
+			return nil, nil, false
+		end
+		return tonumber(first), tonumber(last), true
+	end
+	command("QuickfixActionsAddFile", function(opts)
+		report(function()
+			local args = opts.fargs
+			local file, range = args[1], args[2]
+			local first, last, valid_range = command_range(range)
+			local id
+			if range and not valid_range then
+				id = #args == 2 and tonumber(range) or nil
+				if not id then
+					return nil, "usage: QuickfixActionsAddFile {file} [start:end] [id]"
+				end
+			elseif #args == 3 then
+				id = tonumber(args[3])
+			elseif #args > 3 then
+				return nil, "usage: QuickfixActionsAddFile {file} [start:end] [id]"
+			end
+			if not file or (#args == 3 and not id) then
+				return nil, "usage: QuickfixActionsAddFile {file} [start:end] [id]"
+			end
+			return M.add_file({ kind = "quickfix", id = id }, file, first, last)
+		end)
+	end, { nargs = "+", desc = "Add a file or range to the current or specified quickfix list" })
+	local function choose_and_add(file, first, last)
+		return lists.choose_history({ kind = "quickfix" }, function(target)
+			report(function()
+				return M.add_file(target, file, first, last)
+			end)
+		end)
+	end
+	command("QuickfixActionsAddCurrentHistory", function()
+		report(function()
+			return choose_and_add(vim.api.nvim_buf_get_name(0))
+		end)
+	end, { desc = "Choose a quickfix history list and add the current file" })
+	command("QuickfixActionsAddRangeHistory", function(opts)
+		report(function()
+			return choose_and_add(vim.api.nvim_buf_get_name(0), opts.line1, opts.line2)
+		end)
+	end, { range = true, desc = "Choose a quickfix history list and add the current range" })
+	command("QuickfixActionsAddFileHistory", function(opts)
+		report(function()
+			local file, range = unpack(opts.fargs)
+			local first, last, valid_range = command_range(range)
+			if not file or not valid_range or #opts.fargs > 2 then
+				return nil, "usage: QuickfixActionsAddFileHistory {file} [start:end]"
+			end
+			return choose_and_add(file, first, last)
+		end)
+	end, { nargs = "+", desc = "Choose a quickfix history list and add a file or range" })
+	command("QuickfixActionsSetText", function(opts)
+		report(function()
+			if vim.bo.filetype ~= "qf" then
+				return nil, "run QuickfixActionsSetText from a quickfix or location-list window"
+			end
+			local current, err = M.current()
+			if not current or not current.item then
+				return nil, err or "list entry is empty"
+			end
+			return M.set_text(
+				{ kind = current.kind, id = current.id, winid = current.winid },
+				current.index,
+				opts.args,
+				current.changedtick
+			)
+		end)
+	end, { nargs = "+", desc = "Set the current quickfix entry's message text" })
 end
 
 local function qf_action(action)
@@ -229,6 +313,25 @@ function M.replace(target, items, idx, expected_tick)
 	return lists.replace(target, items, idx, expected_tick)
 end
 
+function M.append(target, items, expected_tick)
+	return lists.append(target, items, expected_tick)
+end
+
+function M.set_text(target, index, text, expected_tick)
+	return lists.set_text(target, index, text, expected_tick)
+end
+
+function M.add_file(target, file, first, last, expected_tick)
+	return lists.add_file(target, file, first, last, expected_tick)
+end
+
+function M.choose_history(target, callback)
+	if type(target) == "function" then
+		callback, target = target, nil
+	end
+	return lists.choose_history(target or { kind = "quickfix" }, callback)
+end
+
 function M.clear(target)
 	return lists.clear(target)
 end
@@ -314,13 +417,41 @@ function M.open(target, opts)
 	local focus = options.focus ~= false
 	local owner = resolved.kind == "location" and resolved.winid
 	local ok, err = with_owner(owner, focus, function()
+		if options.vertical then
+			local existing = lists.window(resolved)
+			if existing then
+				vim.api.nvim_set_current_win(existing)
+				vim.cmd("silent " .. (resolved.kind == "location" and "lclose" or "cclose"))
+				if owner and vim.api.nvim_win_is_valid(owner) then
+					vim.api.nvim_set_current_win(owner)
+				end
+			end
+		end
 		select_history(value, resolved.kind)
 		local command_name = resolved.kind == "location" and "lopen" or "copen"
-		local height = tonumber(options.height)
-		if height then
-			vim.cmd(("silent %s %d"):format(command_name, height))
+		if options.vertical then
+			vim.cmd("silent vertical " .. command_name)
+			local width = tonumber(options.width)
+			if width then
+				vim.cmd(("silent vertical resize %d"):format(width))
+			end
 		else
-			vim.cmd("silent " .. command_name)
+			local height = tonumber(options.height)
+			if height then
+				vim.cmd(("silent %s %d"):format(command_name, height))
+			else
+				vim.cmd("silent " .. command_name)
+			end
+		end
+		local qfwin = vim.api.nvim_get_current_win()
+		local width = options.vertical and tonumber(options.width)
+		if width and vim.api.nvim_win_is_valid(qfwin) then
+			vim.api.nvim_win_set_width(qfwin, width)
+		end
+		for option, enabled in pairs({ wrap = options.wrap, linebreak = options.linebreak, breakindent = options.breakindent }) do
+			if enabled ~= nil then
+				vim.api.nvim_set_option_value(option, enabled, { win = qfwin })
+			end
 		end
 	end)
 	if not ok then

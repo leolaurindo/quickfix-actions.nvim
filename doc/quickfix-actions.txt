@@ -43,10 +43,6 @@ owners fail rather than falling back to another list.
 
 COMMANDS                                                       *quickfix-actions-commands*
 
-                                                        *QuickfixActionsOpen*
-:QuickfixActionsOpen [quickfix|location]  Open a list.
-                                                        *QuickfixActionsClose*
-:QuickfixActionsClose [quickfix|location]  Close a list.
                                                        *QuickfixActionsToggle*
 :QuickfixActionsToggle [quickfix|location]  Toggle a list.
                                                        *QuickfixActionsHistory*
@@ -63,16 +59,61 @@ COMMANDS                                                       *quickfix-actions
 :QuickfixActionsDeleteCurrent  Delete the current entry.
                                                          *QuickfixActionsClear*
 :QuickfixActionsClear  Clear the current list.
+                                                    *QuickfixActionsAddCurrent*
+:QuickfixActionsAddCurrent [id]
+    Append the current file as a file-level entry to the current quickfix list,
+    or to id when supplied.
+                                                     *QuickfixActionsAddRange*
+:[range]QuickfixActionsAddRange [id]
+    Append the current file and selected range to the current quickfix list,
+    or to id when supplied.
+                                                      *QuickfixActionsAddFile*
+:QuickfixActionsAddFile {path} [start:end] [id]
+    Append a file-level entry or range to the current list, or to id when
+    supplied. The optional ID is always the final argument.
+                                             *QuickfixActionsAddCurrentHistory*
+:QuickfixActionsAddCurrentHistory
+    Choose a quickfix history list, then append the current file.
+                                              *QuickfixActionsAddRangeHistory*
+:[range]QuickfixActionsAddRangeHistory
+    Choose a quickfix history list, then append the current file and range.
+                                               *QuickfixActionsAddFileHistory*
+:QuickfixActionsAddFileHistory {path} [start:end]
+    Choose a quickfix history list, then append the supplied file or range.
+                                                *QuickfixActionsSetText*
+:QuickfixActionsSetText {text}
+    Replace the current entry's text from an open quickfix/location-list window.
+
+All add commands are quickfix-list scoped. Range commands accept a visual or
+Ex line range. History selection uses stable list IDs; canceling does nothing.
 
 Default qf-local mappings are <CR> for jump and dd for delete. Set
 mappings.qf = false to install none.
 
 LUA API                                                       *quickfix-actions-api*
 
-The module provides read, current, item, replace, delete, delete_current,
-clear, jump, select, open, close, is_open, toggle, history, open_history,
-entries, pick, and search. Snapshots retain native fields and user_data.
-Mutations can check changedtick.
+The module provides read, current, item, replace, append, set_text, add_file,
+delete, delete_current, clear, jump, select, open, close, is_open, toggle,
+history, open_history, choose_history, entries, pick, and search. Snapshots
+retain native fields and user_data. Mutations can check changedtick.
+
+open(target, opts) accepts vertical=true and width for a vertical quickfix or
+location-list split; otherwise it preserves the horizontal layout and height
+option. Optional wrap, linebreak, and breakindent booleans are applied only to
+the opened list window. toggle() and open_history() accept these same options.
+
+append(target, items, expected_tick) appends native items without replacing list
+metadata. set_text(target, index, text, expected_tick) changes only an item's
+message. add_file(target, path, first, last, expected_tick) appends a file-level
+entry or preserves a supplied range; its text is empty by default. For the
+current quickfix list, pass { kind = 'quickfix' } without an id.
+choose_history(callback) presents quickfix history with title and stable ID,
+then calls back with { kind, id, winid }. Canceling does not mutate a list.
+
+                                                   *actions-set-text*
+:lua require('quickfix_actions').set_text(target, index, text, expected_tick)
+    Change one entry's message while preserving the other entries and list
+    metadata. Use the changedtick from a current() snapshot to avoid stale edits.
 
                                                         *actions-history*
 :lua require('quickfix_actions').history({ kind = 'quickfix' })
