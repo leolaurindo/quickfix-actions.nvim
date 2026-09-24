@@ -8,9 +8,12 @@ end
 
 local function location_owner(qfwin)
 	for _, winid in ipairs(vim.api.nvim_list_wins()) do
-		local ok, value = pcall(vim.fn.getloclist, winid, { all = 1 })
-		if ok and value.winid == qfwin then
-			return winid
+		local info = vim.fn.getwininfo(winid)[1]
+		if info and info.quickfix ~= 1 then
+			local ok, value = pcall(vim.fn.getloclist, winid, { all = 1 })
+			if ok and value.winid == qfwin then
+				return winid
+			end
 		end
 	end
 end

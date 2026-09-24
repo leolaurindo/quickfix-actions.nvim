@@ -78,10 +78,21 @@ compact live picker when Snacks is available, then focuses the selected row in
 the open quickfix/location-list window without jumping to the source buffer.
 Without Snacks, it falls back to `vim.ui.select`.
 
-`open(target, opts)` accepts `vertical = true` and optional `width`; otherwise
-it retains the horizontal layout and `height` behavior. `wrap`, `linebreak`, and
-`breakindent` are optional window-local booleans and are only applied when
-specified. The same options are accepted by `toggle()` and `open_history()`.
+`open(target, opts)` accepts `layout = "full" | "top" | "left" | "right" |
+"bottom"`. `full` opens the native list in its own tab, preserving the existing
+window layout. Left/right layouts use `width`, and top/bottom layouts use
+`height`. The existing `vertical = true` / `width` API and default horizontal /
+`height` behavior remain supported. `layout = "horizontal"` and
+`layout = "vertical"` remain aliases for bottom and right.
+`wrap`, `linebreak`, and `breakindent` are optional window-local booleans and
+are only applied when specified. The same options are accepted by `toggle()` and
+`open_history()`.
+
+`setup({ layout = "bottom" })` sets where `:QuickfixActionsToggle` initially
+opens a list. Runtime layouts are remembered per list, so closing and reopening
+it retains the last layout. `:QuickfixActionsLayoutToggle` cycles bottom → left
+→ top → right → bottom; `full` is not in the cycle (toggling from full starts
+at bottom). If closed, it opens at the remembered or configured layout.
 
 `append(target, items, expected_tick)` appends native items while preserving
 list contents and metadata. `replace(target, items, idx, expected_tick)` replaces
@@ -127,7 +138,9 @@ actions.search({
 
 | Command | Action |
 | --- | --- |
-| `:QuickfixActionsToggle [quickfix\|location]` | Toggle a list |
+| `:QuickfixActionsToggle [quickfix\|location]` | Open or close a list window |
+| `:QuickfixActionsLayoutToggle [quickfix\|location]` | Cycle an open list through bottom, left, top, and right; opens closed lists at their remembered or configured layout |
+| `:QuickfixActionsLayout {full\|top\|left\|right\|bottom} [quickfix\|location]` | Reopen the current list in a full tab or at the requested edge |
 | `:QuickfixActionsHistory [quickfix\|location]` | Open the history browser |
 | `:QuickfixActionsPick` | Pick an entry and jump to its source |
 | `:QuickfixActionsSearch` | Search the current list and focus the selected row |
@@ -141,6 +154,10 @@ actions.search({
 | `:[range]QuickfixActionsAddRangeHistory` | Choose a history list, then add the current range |
 | `:QuickfixActionsAddFileHistory {path} [start:end]` | Choose a history list, then add a file or range |
 | `:QuickfixActionsSetText {text}` | Replace the current entry's message from an open list window |
+
+`QuickfixActionsLayout` defaults to the kind of the current native list. For
+location lists, the owner is the current file window (or the owner of the current
+location-list window). It reopens the same list, even when changing orientation.
 
 Default qf-local mappings are `<CR>` for jump and `dd` for delete. Configure or
 disable them without taking over native navigation:
