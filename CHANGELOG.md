@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] - 2026-09-24
+
+### Added
+
+- Positional quickfix and location-list layouts (`top`, `left`, `right`, and `bottom`) and a full-tab layout that preserves the existing window layout.
+- `:QuickfixActionsLayout` and `:QuickfixActionsLayoutToggle` for setting and cycling list layouts.
+- Configurable initial layout and per-list runtime layout memory for `:QuickfixActionsToggle`.
+
+### Changed
+
+- Preserved the existing `vertical = true` Lua API and horizontal/vertical layout aliases.
+
 ## [0.3.0] - 2026-09-24
 
 ### Added
